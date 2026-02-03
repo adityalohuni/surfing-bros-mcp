@@ -1,0 +1,4 @@
+/target/
+/workflows.json
+*.exe
+*.log

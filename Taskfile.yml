@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+vars:
+  GREETING: SurferBros's MCP
+
+tasks:
+  default:
+    desc: Print a greeting message
+    cmds:
+      - echo "{{.GREETING}}"
+    silent: true
+
+  build:
+    desc: Builds MCP binary
+    cmds:
+      - go build -o ./target/SurferMcp ./cmd/mcp 
+
+  run:
+    desc: Runs MCP server
+    cmds:
+      - go run ./cmd/mcp
+  
