@@ -37,9 +37,13 @@ type Options struct {
 
 // Session represents a connected browser extension.
 type Session struct {
-	ID   string
-	Conn *websocket.Conn
-	mu   sync.Mutex
+	ID          string
+	Conn        *websocket.Conn
+	mu          sync.Mutex
+	RemoteAddr  string
+	UserAgent   string
+	ConnectedAt time.Time
+	LastSeen    time.Time
 }
 
 func NewBridge(opts Options) *Bridge {
@@ -75,7 +79,15 @@ func (b *Bridge) HandleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := uuid.New().String()
-	session := &Session{ID: id, Conn: conn}
+	now := time.Now()
+	session := &Session{
+		ID:          id,
+		Conn:        conn,
+		RemoteAddr:  r.RemoteAddr,
+		UserAgent:   r.UserAgent(),
+		ConnectedAt: now,
+		LastSeen:    now,
+	}
 
 	b.mu.Lock()
 	b.sessions[id] = session
@@ -106,6 +118,9 @@ func (b *Bridge) readLoop(session *Session) {
 		if err != nil {
 			return
 		}
+		session.mu.Lock()
+		session.LastSeen = time.Now()
+		session.mu.Unlock()
 		var resp protocol.Response
 		if err := json.Unmarshal(message, &resp); err != nil {
 			log.Printf("ws invalid message: %v", err)
@@ -143,9 +158,57 @@ func (b *Bridge) activeSession() (*Session, error) {
 	return session, nil
 }
 
+func (b *Bridge) sessionByID(id string) (*Session, error) {
+	if id == "" {
+		return b.activeSession()
+	}
+	b.mu.RLock()
+	session := b.sessions[id]
+	b.mu.RUnlock()
+	if session == nil {
+		return nil, ErrNoActiveSession
+	}
+	return session, nil
+}
+
+type SessionInfo struct {
+	ID          string    `json:"id"`
+	RemoteAddr  string    `json:"remote_addr,omitempty"`
+	UserAgent   string    `json:"user_agent,omitempty"`
+	ConnectedAt time.Time `json:"connected_at"`
+	LastSeen    time.Time `json:"last_seen"`
+	Active      bool      `json:"active"`
+}
+
+func (b *Bridge) ListSessions() []SessionInfo {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	out := make([]SessionInfo, 0, len(b.sessions))
+	for id, s := range b.sessions {
+		s.mu.Lock()
+		info := SessionInfo{
+			ID:          id,
+			RemoteAddr:  s.RemoteAddr,
+			UserAgent:   s.UserAgent,
+			ConnectedAt: s.ConnectedAt,
+			LastSeen:    s.LastSeen,
+			Active:      id == b.activeID,
+		}
+		s.mu.Unlock()
+		out = append(out, info)
+	}
+	return out
+}
+
+func (b *Bridge) Count() int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return len(b.sessions)
+}
+
 // SendCommand sends a command to the active browser session and waits for a response.
 func (b *Bridge) SendCommand(ctx context.Context, cmd protocol.Command) (protocol.Response, error) {
-	session, err := b.activeSession()
+	session, err := b.sessionByID(cmd.SessionID)
 	if err != nil {
 		return protocol.Response{}, err
 	}

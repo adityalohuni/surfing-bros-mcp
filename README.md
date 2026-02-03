@@ -2,6 +2,9 @@
 
 This is the MCP server that bridges the LLM to the browser extension over WebSocket.
 
+Repository: https://github.com/adityalohuni/surfing-bros-mcp  
+Parent: https://github.com/adityalohuni/surfing-bros
+
 ## Quick Start
 
 ```bash
@@ -10,6 +13,20 @@ go run ./cmd/mcp
 ```
 
 The server listens for WebSocket connections at `ws://localhost:9099/ws`.
+
+## Requirements
+
+- Go 1.21+
+
+## Daemon Mode
+
+If you use `mcpd`:
+
+```bash
+go run ./cmd/mcpd
+```
+
+This exposes HTTP/SSE endpoints and admin routes (see `mcp/cmd/mcpd` for flags/env).
 
 ## MCP Tools
 

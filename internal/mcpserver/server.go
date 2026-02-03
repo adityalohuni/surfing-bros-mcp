@@ -22,11 +22,16 @@ type Options struct {
 }
 
 type Server struct {
-	mcpServer *mcp.Server
-	browser   browser.Browser
-	store     *page.Store
-	workflows *workflow.Store
+	mcpServer     *mcp.Server
+	browser       browser.Browser
+	store         *page.Store
+	workflows     *workflow.Store
 	workflowLimit int
+}
+
+type TargetInput struct {
+	SessionID string `json:"sessionId,omitempty" jsonschema:"browser session id"`
+	TabID     int    `json:"tabId,omitempty" jsonschema:"browser tab id"`
 }
 
 func New(browserClient browser.Browser, store *page.Store, opts Options) *Server {
@@ -125,6 +130,41 @@ func New(browserClient browser.Browser, store *page.Store, opts Options) *Server
 	}, s.getRecording)
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "browser.list_tabs",
+		Description: "List available browser tabs for the active session.",
+	}, s.listTabs)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "browser.find_tab",
+		Description: "Find tabs by title, URL, or id and return matching tab info.",
+	}, s.findTab)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "browser.open_tab",
+		Description: "Open a new browser tab owned by the session.",
+	}, s.openTab)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "browser.close_tab",
+		Description: "Close a browser tab owned by the session.",
+	}, s.closeTab)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "browser.claim_tab",
+		Description: "Claim an existing browser tab for the session.",
+	}, s.claimTab)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "browser.release_tab",
+		Description: "Release ownership of a browser tab for the session.",
+	}, s.releaseTab)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "browser.set_tab_sharing",
+		Description: "Allow or disallow shared claims on a tab owned by the session.",
+	}, s.setTabSharing)
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "workflow.save",
 		Description: "Save a recorded workflow into server memory.",
 	}, s.saveWorkflow)
@@ -169,12 +209,27 @@ func (s *Server) Run(ctx context.Context, transport mcp.Transport) error {
 	return s.mcpServer.Run(ctx, transport)
 }
 
+func (s *Server) MCPServer() *mcp.Server {
+	return s.mcpServer
+}
+
+func (s *Server) withTarget(ctx context.Context, target TargetInput) context.Context {
+	if target.SessionID == "" && target.TabID == 0 {
+		return ctx
+	}
+	return browser.WithTarget(ctx, browser.Target{
+		SessionID: target.SessionID,
+		TabID:     target.TabID,
+	})
+}
+
 type ClickInput struct {
+	TargetInput
 	Selector string `json:"selector" jsonschema:"CSS selector for the element to click"`
 }
 
 type ClickOutput struct {
-	Status string `json:"status" jsonschema:"status of the click operation"`
+	Status   string `json:"status" jsonschema:"status of the click operation"`
 	Selector string `json:"selector,omitempty" jsonschema:"CSS selector that was clicked"`
 }
 
@@ -182,6 +237,7 @@ func (s *Server) click(ctx context.Context, _ *mcp.CallToolRequest, input ClickI
 	if input.Selector == "" {
 		return nil, ClickOutput{}, errors.New("selector is required")
 	}
+	ctx = s.withTarget(ctx, input.TargetInput)
 	result, err := s.browser.Click(ctx, input.Selector)
 	if err != nil {
 		return nil, ClickOutput{}, err
@@ -190,6 +246,7 @@ func (s *Server) click(ctx context.Context, _ *mcp.CallToolRequest, input ClickI
 }
 
 type SnapshotInput struct {
+	TargetInput
 	IncludeHidden bool `json:"includeHidden,omitempty" jsonschema:"include hidden elements"`
 	MaxElements   int  `json:"maxElements,omitempty" jsonschema:"maximum number of elements to return"`
 	MaxText       int  `json:"maxText,omitempty" jsonschema:"maximum characters of text to return"`
@@ -199,15 +256,16 @@ type SnapshotInput struct {
 }
 
 type SnapshotOutput struct {
-	SnapshotID string        `json:"snapshot_id" jsonschema:"identifier for the stored snapshot"`
-	URL        string        `json:"url" jsonschema:"page URL"`
-	Title      string        `json:"title,omitempty" jsonschema:"page title"`
-	Text       string        `json:"text" jsonschema:"reduced page text"`
+	SnapshotID string         `json:"snapshot_id" jsonschema:"identifier for the stored snapshot"`
+	URL        string         `json:"url" jsonschema:"page URL"`
+	Title      string         `json:"title,omitempty" jsonschema:"page title"`
+	Text       string         `json:"text" jsonschema:"reduced page text"`
 	Elements   []page.Element `json:"elements,omitempty" jsonschema:"actionable elements"`
 	Actions    []page.Action  `json:"actions,omitempty" jsonschema:"compact action map"`
 }
 
 func (s *Server) snapshot(ctx context.Context, _ *mcp.CallToolRequest, input SnapshotInput) (*mcp.CallToolResult, SnapshotOutput, error) {
+	ctx = s.withTarget(ctx, input.TargetInput)
 	snap, err := s.browser.Snapshot(ctx, browser.SnapshotOptions{
 		IncludeHidden: input.IncludeHidden,
 		MaxElements:   input.MaxElements,
@@ -233,6 +291,7 @@ func (s *Server) snapshot(ctx context.Context, _ *mcp.CallToolRequest, input Sna
 }
 
 type ScrollInput struct {
+	TargetInput
 	DeltaX   int    `json:"deltaX,omitempty" jsonschema:"horizontal scroll delta in pixels"`
 	DeltaY   int    `json:"deltaY,omitempty" jsonschema:"vertical scroll delta in pixels"`
 	Selector string `json:"selector,omitempty" jsonschema:"optional selector for a scrollable element"`
@@ -241,6 +300,7 @@ type ScrollInput struct {
 }
 
 func (s *Server) scroll(ctx context.Context, _ *mcp.CallToolRequest, input ScrollInput) (*mcp.CallToolResult, browser.ScrollResult, error) {
+	ctx = s.withTarget(ctx, input.TargetInput)
 	out, err := s.browser.Scroll(ctx, browser.ScrollOptions{
 		DeltaX:   input.DeltaX,
 		DeltaY:   input.DeltaY,
@@ -255,10 +315,12 @@ func (s *Server) scroll(ctx context.Context, _ *mcp.CallToolRequest, input Scrol
 }
 
 type HoverInput struct {
+	TargetInput
 	Selector string `json:"selector" jsonschema:"CSS selector of element to hover"`
 }
 
 func (s *Server) hover(ctx context.Context, _ *mcp.CallToolRequest, input HoverInput) (*mcp.CallToolResult, browser.HoverResult, error) {
+	ctx = s.withTarget(ctx, input.TargetInput)
 	out, err := s.browser.Hover(ctx, input.Selector)
 	if err != nil {
 		return nil, browser.HoverResult{}, err
@@ -267,12 +329,14 @@ func (s *Server) hover(ctx context.Context, _ *mcp.CallToolRequest, input HoverI
 }
 
 type TypeInput struct {
+	TargetInput
 	Selector   string `json:"selector" jsonschema:"CSS selector of input/textarea"`
 	Text       string `json:"text" jsonschema:"text to enter"`
 	PressEnter bool   `json:"pressEnter,omitempty" jsonschema:"press Enter after typing"`
 }
 
 func (s *Server) typeText(ctx context.Context, _ *mcp.CallToolRequest, input TypeInput) (*mcp.CallToolResult, browser.TypeResult, error) {
+	ctx = s.withTarget(ctx, input.TargetInput)
 	out, err := s.browser.Type(ctx, input.Selector, input.Text, input.PressEnter)
 	if err != nil {
 		return nil, browser.TypeResult{}, err
@@ -281,11 +345,13 @@ func (s *Server) typeText(ctx context.Context, _ *mcp.CallToolRequest, input Typ
 }
 
 type EnterInput struct {
+	TargetInput
 	Selector string `json:"selector,omitempty" jsonschema:"optional selector to send key to"`
 	Key      string `json:"key,omitempty" jsonschema:"key to send (default Enter)"`
 }
 
 func (s *Server) enter(ctx context.Context, _ *mcp.CallToolRequest, input EnterInput) (*mcp.CallToolResult, browser.EnterResult, error) {
+	ctx = s.withTarget(ctx, input.TargetInput)
 	out, err := s.browser.Enter(ctx, input.Selector, input.Key)
 	if err != nil {
 		return nil, browser.EnterResult{}, err
@@ -293,9 +359,12 @@ func (s *Server) enter(ctx context.Context, _ *mcp.CallToolRequest, input EnterI
 	return nil, out, nil
 }
 
-type EmptyInput struct{}
+type EmptyInput struct {
+	TargetInput
+}
 
-func (s *Server) back(ctx context.Context, _ *mcp.CallToolRequest, _ EmptyInput) (*mcp.CallToolResult, browser.HistoryResult, error) {
+func (s *Server) back(ctx context.Context, _ *mcp.CallToolRequest, input EmptyInput) (*mcp.CallToolResult, browser.HistoryResult, error) {
+	ctx = s.withTarget(ctx, input.TargetInput)
 	out, err := s.browser.Back(ctx)
 	if err != nil {
 		return nil, browser.HistoryResult{}, err
@@ -303,7 +372,8 @@ func (s *Server) back(ctx context.Context, _ *mcp.CallToolRequest, _ EmptyInput)
 	return nil, out, nil
 }
 
-func (s *Server) forward(ctx context.Context, _ *mcp.CallToolRequest, _ EmptyInput) (*mcp.CallToolResult, browser.HistoryResult, error) {
+func (s *Server) forward(ctx context.Context, _ *mcp.CallToolRequest, input EmptyInput) (*mcp.CallToolResult, browser.HistoryResult, error) {
+	ctx = s.withTarget(ctx, input.TargetInput)
 	out, err := s.browser.Forward(ctx)
 	if err != nil {
 		return nil, browser.HistoryResult{}, err
@@ -312,11 +382,13 @@ func (s *Server) forward(ctx context.Context, _ *mcp.CallToolRequest, _ EmptyInp
 }
 
 type WaitForSelectorInput struct {
+	TargetInput
 	Selector  string `json:"selector" jsonschema:"CSS selector to wait for"`
 	TimeoutMs int    `json:"timeoutMs,omitempty" jsonschema:"timeout in milliseconds"`
 }
 
 func (s *Server) waitForSelector(ctx context.Context, _ *mcp.CallToolRequest, input WaitForSelectorInput) (*mcp.CallToolResult, browser.WaitForSelectorResult, error) {
+	ctx = s.withTarget(ctx, input.TargetInput)
 	out, err := s.browser.WaitForSelector(ctx, input.Selector, input.TimeoutMs)
 	if err != nil {
 		return nil, browser.WaitForSelectorResult{}, err
@@ -325,6 +397,7 @@ func (s *Server) waitForSelector(ctx context.Context, _ *mcp.CallToolRequest, in
 }
 
 type FindInput struct {
+	TargetInput
 	Text          string `json:"text" jsonschema:"text to search for"`
 	Limit         int    `json:"limit,omitempty" jsonschema:"max results returned"`
 	Radius        int    `json:"radius,omitempty" jsonschema:"context radius for snippets"`
@@ -332,6 +405,7 @@ type FindInput struct {
 }
 
 func (s *Server) find(ctx context.Context, _ *mcp.CallToolRequest, input FindInput) (*mcp.CallToolResult, browser.FindResult, error) {
+	ctx = s.withTarget(ctx, input.TargetInput)
 	out, err := s.browser.Find(ctx, input.Text, input.Limit, input.Radius, input.CaseSensitive)
 	if err != nil {
 		return nil, browser.FindResult{}, err
@@ -340,10 +414,12 @@ func (s *Server) find(ctx context.Context, _ *mcp.CallToolRequest, input FindInp
 }
 
 type NavigateInput struct {
+	TargetInput
 	URL string `json:"url" jsonschema:"URL to navigate to"`
 }
 
 func (s *Server) navigate(ctx context.Context, _ *mcp.CallToolRequest, input NavigateInput) (*mcp.CallToolResult, browser.NavigateResult, error) {
+	ctx = s.withTarget(ctx, input.TargetInput)
 	out, err := s.browser.Navigate(ctx, input.URL)
 	if err != nil {
 		return nil, browser.NavigateResult{}, err
@@ -352,6 +428,7 @@ func (s *Server) navigate(ctx context.Context, _ *mcp.CallToolRequest, input Nav
 }
 
 type SelectInput struct {
+	TargetInput
 	Selector  string   `json:"selector" jsonschema:"CSS selector for select element"`
 	Value     string   `json:"value,omitempty" jsonschema:"option value to select"`
 	Label     string   `json:"label,omitempty" jsonschema:"option label to select"`
@@ -364,6 +441,7 @@ type SelectInput struct {
 }
 
 func (s *Server) selectOption(ctx context.Context, _ *mcp.CallToolRequest, input SelectInput) (*mcp.CallToolResult, browser.SelectResult, error) {
+	ctx = s.withTarget(ctx, input.TargetInput)
 	out, err := s.browser.Select(ctx, browser.SelectOptions{
 		Selector:  input.Selector,
 		Value:     input.Value,
@@ -382,6 +460,7 @@ func (s *Server) selectOption(ctx context.Context, _ *mcp.CallToolRequest, input
 }
 
 type ScreenshotInput struct {
+	TargetInput
 	Selector  string  `json:"selector,omitempty" jsonschema:"element selector (omit for viewport)"`
 	Padding   int     `json:"padding,omitempty" jsonschema:"padding around element in pixels"`
 	Format    string  `json:"format,omitempty" jsonschema:"png or jpeg"`
@@ -391,6 +470,7 @@ type ScreenshotInput struct {
 }
 
 func (s *Server) screenshot(ctx context.Context, _ *mcp.CallToolRequest, input ScreenshotInput) (*mcp.CallToolResult, browser.ScreenshotResult, error) {
+	ctx = s.withTarget(ctx, input.TargetInput)
 	out, err := s.browser.Screenshot(ctx, browser.ScreenshotOptions{
 		Selector:  input.Selector,
 		Padding:   input.Padding,
@@ -468,7 +548,8 @@ type RecordingStateOutput struct {
 	Count     int  `json:"count"`
 }
 
-func (s *Server) startRecording(ctx context.Context, _ *mcp.CallToolRequest, _ EmptyInput) (*mcp.CallToolResult, RecordingStateOutput, error) {
+func (s *Server) startRecording(ctx context.Context, _ *mcp.CallToolRequest, input EmptyInput) (*mcp.CallToolResult, RecordingStateOutput, error) {
+	ctx = s.withTarget(ctx, input.TargetInput)
 	out, err := s.browser.StartRecording(ctx)
 	if err != nil {
 		return nil, RecordingStateOutput{}, err
@@ -476,7 +557,8 @@ func (s *Server) startRecording(ctx context.Context, _ *mcp.CallToolRequest, _ E
 	return nil, RecordingStateOutput{Recording: out.Recording, Count: out.Count}, nil
 }
 
-func (s *Server) stopRecording(ctx context.Context, _ *mcp.CallToolRequest, _ EmptyInput) (*mcp.CallToolResult, RecordingStateOutput, error) {
+func (s *Server) stopRecording(ctx context.Context, _ *mcp.CallToolRequest, input EmptyInput) (*mcp.CallToolResult, RecordingStateOutput, error) {
+	ctx = s.withTarget(ctx, input.TargetInput)
 	out, err := s.browser.StopRecording(ctx)
 	if err != nil {
 		return nil, RecordingStateOutput{}, err
@@ -488,7 +570,8 @@ type RecordingOutput struct {
 	Actions []browser.RecordedAction `json:"actions"`
 }
 
-func (s *Server) getRecording(ctx context.Context, _ *mcp.CallToolRequest, _ EmptyInput) (*mcp.CallToolResult, RecordingOutput, error) {
+func (s *Server) getRecording(ctx context.Context, _ *mcp.CallToolRequest, input EmptyInput) (*mcp.CallToolResult, RecordingOutput, error) {
+	ctx = s.withTarget(ctx, input.TargetInput)
 	out, err := s.browser.GetRecording(ctx)
 	if err != nil {
 		return nil, RecordingOutput{}, err
@@ -496,9 +579,174 @@ func (s *Server) getRecording(ctx context.Context, _ *mcp.CallToolRequest, _ Emp
 	return nil, RecordingOutput{Actions: out}, nil
 }
 
+type ListTabsInput struct {
+	TargetInput
+}
+
+type ListTabsOutput struct {
+	Tabs []browser.TabInfo `json:"tabs"`
+}
+
+func (s *Server) listTabs(ctx context.Context, _ *mcp.CallToolRequest, input ListTabsInput) (*mcp.CallToolResult, ListTabsOutput, error) {
+	ctx = s.withTarget(ctx, input.TargetInput)
+	tabs, err := s.browser.ListTabs(ctx)
+	if err != nil {
+		return nil, ListTabsOutput{}, err
+	}
+	return nil, ListTabsOutput{Tabs: tabs}, nil
+}
+
+type FindTabInput struct {
+	TargetInput
+	Query     string `json:"query" jsonschema:"text to match against title, URL, or id"`
+	MatchMode string `json:"matchMode,omitempty" jsonschema:"match mode: exact or partial (default partial)"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"maximum results to return"`
+}
+
+type FindTabOutput struct {
+	Tabs []browser.TabInfo `json:"tabs"`
+}
+
+func (s *Server) findTab(ctx context.Context, _ *mcp.CallToolRequest, input FindTabInput) (*mcp.CallToolResult, FindTabOutput, error) {
+	if strings.TrimSpace(input.Query) == "" {
+		return nil, FindTabOutput{}, errors.New("query is required")
+	}
+	ctx = s.withTarget(ctx, input.TargetInput)
+	tabs, err := s.browser.ListTabs(ctx)
+	if err != nil {
+		return nil, FindTabOutput{}, err
+	}
+	limit := input.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+	matchMode := strings.ToLower(strings.TrimSpace(input.MatchMode))
+	if matchMode == "" {
+		matchMode = "partial"
+	}
+	query := strings.ToLower(strings.TrimSpace(input.Query))
+	out := make([]browser.TabInfo, 0, limit)
+	for _, tab := range tabs {
+		label := strings.ToLower(strings.TrimSpace(tab.Title + " " + tab.URL + " " + fmt.Sprint(tab.ID)))
+		var match bool
+		if matchMode == "exact" {
+			match = label == query || strings.ToLower(strings.TrimSpace(tab.Title)) == query || strings.ToLower(strings.TrimSpace(tab.URL)) == query || fmt.Sprint(tab.ID) == strings.TrimSpace(input.Query)
+		} else {
+			match = strings.Contains(label, query)
+		}
+		if match {
+			out = append(out, tab)
+			if len(out) >= limit {
+				break
+			}
+		}
+	}
+	return nil, FindTabOutput{Tabs: out}, nil
+}
+
+type OpenTabInput struct {
+	TargetInput
+	URL    string `json:"url,omitempty" jsonschema:"URL to open in a new tab"`
+	Active bool   `json:"active,omitempty" jsonschema:"open tab as active"`
+	Pinned bool   `json:"pinned,omitempty" jsonschema:"open tab as pinned"`
+}
+
+type OpenTabOutput struct {
+	Tab browser.TabInfo `json:"tab"`
+}
+
+func (s *Server) openTab(ctx context.Context, _ *mcp.CallToolRequest, input OpenTabInput) (*mcp.CallToolResult, OpenTabOutput, error) {
+	ctx = s.withTarget(ctx, input.TargetInput)
+	tab, err := s.browser.OpenTab(ctx, browser.OpenTabOptions{
+		URL:    input.URL,
+		Active: input.Active,
+		Pinned: input.Pinned,
+	})
+	if err != nil {
+		return nil, OpenTabOutput{}, err
+	}
+	return nil, OpenTabOutput{Tab: tab}, nil
+}
+
+type CloseTabInput struct {
+	TargetInput
+	TabID int `json:"tabId" jsonschema:"tab id to close"`
+}
+
+func (s *Server) closeTab(ctx context.Context, _ *mcp.CallToolRequest, input CloseTabInput) (*mcp.CallToolResult, EmptyOutput, error) {
+	if input.TabID == 0 {
+		return nil, EmptyOutput{}, errors.New("tabId is required")
+	}
+	ctx = s.withTarget(ctx, input.TargetInput)
+	if err := s.browser.CloseTab(ctx, input.TabID); err != nil {
+		return nil, EmptyOutput{}, err
+	}
+	return nil, EmptyOutput{}, nil
+}
+
+type ClaimTabInput struct {
+	TargetInput
+	TabID         int    `json:"tabId" jsonschema:"tab id to claim"`
+	Mode          string `json:"mode,omitempty" jsonschema:"exclusive or shared"`
+	RequireActive bool   `json:"requireActive,omitempty" jsonschema:"require tab to be active to claim"`
+}
+
+type ClaimTabOutput struct {
+	Tab browser.TabInfo `json:"tab"`
+}
+
+func (s *Server) claimTab(ctx context.Context, _ *mcp.CallToolRequest, input ClaimTabInput) (*mcp.CallToolResult, ClaimTabOutput, error) {
+	if input.TabID == 0 && !input.RequireActive {
+		return nil, ClaimTabOutput{}, errors.New("tabId is required")
+	}
+	ctx = s.withTarget(ctx, input.TargetInput)
+	tab, err := s.browser.ClaimTab(ctx, browser.ClaimTabOptions{
+		TabID:         input.TabID,
+		Mode:          input.Mode,
+		RequireActive: input.RequireActive,
+	})
+	if err != nil {
+		return nil, ClaimTabOutput{}, err
+	}
+	return nil, ClaimTabOutput{Tab: tab}, nil
+}
+
+type ReleaseTabInput struct {
+	TargetInput
+	TabID int `json:"tabId" jsonschema:"tab id to release"`
+}
+
+func (s *Server) releaseTab(ctx context.Context, _ *mcp.CallToolRequest, input ReleaseTabInput) (*mcp.CallToolResult, EmptyOutput, error) {
+	if input.TabID == 0 {
+		return nil, EmptyOutput{}, errors.New("tabId is required")
+	}
+	ctx = s.withTarget(ctx, input.TargetInput)
+	if err := s.browser.ReleaseTab(ctx, input.TabID); err != nil {
+		return nil, EmptyOutput{}, err
+	}
+	return nil, EmptyOutput{}, nil
+}
+
+type SetTabSharingInput struct {
+	TargetInput
+	TabID       int  `json:"tabId" jsonschema:"tab id to update"`
+	AllowShared bool `json:"allowShared" jsonschema:"allow shared claims"`
+}
+
+func (s *Server) setTabSharing(ctx context.Context, _ *mcp.CallToolRequest, input SetTabSharingInput) (*mcp.CallToolResult, EmptyOutput, error) {
+	if input.TabID == 0 {
+		return nil, EmptyOutput{}, errors.New("tabId is required")
+	}
+	ctx = s.withTarget(ctx, input.TargetInput)
+	if err := s.browser.SetTabSharing(ctx, input.TabID, input.AllowShared); err != nil {
+		return nil, EmptyOutput{}, err
+	}
+	return nil, EmptyOutput{}, nil
+}
+
 type WorkflowSaveInput struct {
-	Name        string                  `json:"name" jsonschema:"workflow name"`
-	Description string                  `json:"description,omitempty" jsonschema:"workflow description"`
+	Name        string                   `json:"name" jsonschema:"workflow name"`
+	Description string                   `json:"description,omitempty" jsonschema:"workflow description"`
 	Steps       []browser.RecordedAction `json:"steps,omitempty" jsonschema:"recorded steps"`
 }
 

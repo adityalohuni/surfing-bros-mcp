@@ -71,11 +71,7 @@ func (c *Client) Snapshot(ctx context.Context, opts browser.SnapshotOptions) (pa
 		return page.Snapshot{}, err
 	}
 
-	resp, err := c.bridge.SendCommand(ctx, protocol.Command{
-		ID:      uuid.New().String(),
-		Type:    protocol.CommandSnapshot,
-		Payload: payload,
-	})
+	resp, err := c.bridge.SendCommand(ctx, c.makeCommand(ctx, protocol.CommandSnapshot, payload))
 	if err != nil {
 		return page.Snapshot{}, err
 	}
@@ -321,6 +317,68 @@ func (c *Client) GetRecording(ctx context.Context) ([]browser.RecordedAction, er
 	return out, nil
 }
 
+func (c *Client) ListTabs(ctx context.Context) ([]browser.TabInfo, error) {
+	resp, err := c.sendActionWithData(ctx, protocol.CommandListTabs, struct{}{})
+	if err != nil {
+		return nil, err
+	}
+	var out []browser.TabInfo
+	if err := decodeResponse(resp, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) OpenTab(ctx context.Context, opts browser.OpenTabOptions) (browser.TabInfo, error) {
+	resp, err := c.sendActionWithData(ctx, protocol.CommandOpenTab, protocol.OpenTabPayload{
+		URL:    opts.URL,
+		Active: opts.Active,
+		Pinned: opts.Pinned,
+	})
+	if err != nil {
+		return browser.TabInfo{}, err
+	}
+	var out browser.TabInfo
+	if err := decodeResponse(resp, &out); err != nil {
+		return browser.TabInfo{}, err
+	}
+	return out, nil
+}
+
+func (c *Client) CloseTab(ctx context.Context, tabID int) error {
+	_, err := c.sendActionWithData(ctx, protocol.CommandCloseTab, protocol.CloseTabPayload{TabID: tabID})
+	return err
+}
+
+func (c *Client) ClaimTab(ctx context.Context, opts browser.ClaimTabOptions) (browser.TabInfo, error) {
+	resp, err := c.sendActionWithData(ctx, protocol.CommandClaimTab, protocol.ClaimTabPayload{
+		TabID:         opts.TabID,
+		Mode:          opts.Mode,
+		RequireActive: opts.RequireActive,
+	})
+	if err != nil {
+		return browser.TabInfo{}, err
+	}
+	var out browser.TabInfo
+	if err := decodeResponse(resp, &out); err != nil {
+		return browser.TabInfo{}, err
+	}
+	return out, nil
+}
+
+func (c *Client) ReleaseTab(ctx context.Context, tabID int) error {
+	_, err := c.sendActionWithData(ctx, protocol.CommandReleaseTab, protocol.ReleaseTabPayload{TabID: tabID})
+	return err
+}
+
+func (c *Client) SetTabSharing(ctx context.Context, tabID int, allowShared bool) error {
+	_, err := c.sendActionWithData(ctx, protocol.CommandSetTabSharing, protocol.SetTabSharingPayload{
+		TabID:       tabID,
+		AllowShared: allowShared,
+	})
+	return err
+}
+
 func mapElements(in []protocol.Element) []page.Element {
 	if len(in) == 0 {
 		return nil
@@ -328,19 +386,19 @@ func mapElements(in []protocol.Element) []page.Element {
 	out := make([]page.Element, 0, len(in))
 	for _, el := range in {
 		out = append(out, page.Element{
-			Tag:       el.Tag,
-			Text:      el.Text,
-			Selector:  el.Selector,
-			Href:      el.Href,
-			InputType: el.InputType,
-			Name:      el.Name,
-			ID:        el.ID,
-			ARIALabel: el.ARIALabel,
-			Title:     el.Title,
-			Alt:       el.Alt,
-			Value:     el.Value,
+			Tag:         el.Tag,
+			Text:        el.Text,
+			Selector:    el.Selector,
+			Href:        el.Href,
+			InputType:   el.InputType,
+			Name:        el.Name,
+			ID:          el.ID,
+			ARIALabel:   el.ARIALabel,
+			Title:       el.Title,
+			Alt:         el.Alt,
+			Value:       el.Value,
 			Placeholder: el.Placeholder,
-			Context:   el.Context,
+			Context:     el.Context,
 		})
 	}
 	return out
@@ -359,11 +417,7 @@ func (c *Client) sendActionWithData(ctx context.Context, cmdType protocol.Comman
 	if err != nil {
 		return protocol.Response{}, err
 	}
-	resp, err := c.bridge.SendCommand(ctx, protocol.Command{
-		ID:      uuid.New().String(),
-		Type:    cmdType,
-		Payload: raw,
-	})
+	resp, err := c.bridge.SendCommand(ctx, c.makeCommand(ctx, cmdType, raw))
 	if err != nil {
 		return protocol.Response{}, err
 	}
@@ -380,6 +434,19 @@ func (c *Client) sendActionWithData(ctx context.Context, cmdType protocol.Comman
 		return protocol.Response{}, errors.New(resp.Error)
 	}
 	return resp, nil
+}
+
+func (c *Client) makeCommand(ctx context.Context, cmdType protocol.CommandType, payload json.RawMessage) protocol.Command {
+	cmd := protocol.Command{
+		ID:      uuid.New().String(),
+		Type:    cmdType,
+		Payload: payload,
+	}
+	if target, ok := browser.TargetFromContext(ctx); ok {
+		cmd.SessionID = target.SessionID
+		cmd.TabID = target.TabID
+	}
+	return cmd
 }
 
 func decodeResponse(resp protocol.Response, out any) error {

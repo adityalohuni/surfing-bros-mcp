@@ -7,7 +7,7 @@ import (
 )
 
 type ClickResult struct {
-	Status string `json:"status"`
+	Status   string `json:"status"`
 	Selector string `json:"selector,omitempty"`
 }
 
@@ -37,6 +37,30 @@ type Browser interface {
 	StartRecording(ctx context.Context) (RecordingStateResult, error)
 	StopRecording(ctx context.Context) (RecordingStateResult, error)
 	GetRecording(ctx context.Context) ([]RecordedAction, error)
+	ListTabs(ctx context.Context) ([]TabInfo, error)
+	OpenTab(ctx context.Context, opts OpenTabOptions) (TabInfo, error)
+	CloseTab(ctx context.Context, tabID int) error
+	ClaimTab(ctx context.Context, opts ClaimTabOptions) (TabInfo, error)
+	ReleaseTab(ctx context.Context, tabID int) error
+	SetTabSharing(ctx context.Context, tabID int, allowShared bool) error
+}
+
+type TabInfo struct {
+	ID    int    `json:"id"`
+	Title string `json:"title"`
+	URL   string `json:"url"`
+}
+
+type OpenTabOptions struct {
+	URL    string
+	Active bool
+	Pinned bool
+}
+
+type ClaimTabOptions struct {
+	TabID         int
+	Mode          string
+	RequireActive bool
 }
 
 type ScrollOptions struct {
@@ -66,9 +90,9 @@ type TypeResult struct {
 }
 
 type EnterResult struct {
-	Selector         string `json:"selector,omitempty"`
-	Key              string `json:"key"`
-	UsedActiveElement bool  `json:"usedActiveElement"`
+	Selector          string `json:"selector,omitempty"`
+	Key               string `json:"key"`
+	UsedActiveElement bool   `json:"usedActiveElement"`
 }
 
 type HistoryResult struct {
