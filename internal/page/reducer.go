@@ -155,7 +155,6 @@ func nodeText(n *html.Node) string {
 	return strings.TrimSpace(b.String())
 }
 
-
 func selectorFromNode(tag string, n *html.Node, path []string) string {
 	if id := attr(n, "id"); id != "" {
 		return "#" + id

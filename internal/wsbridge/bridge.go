@@ -108,7 +108,9 @@ func (b *Bridge) HandleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	b.mu.Unlock()
 
-	conn.Close()
+	if err := conn.Close(); err != nil {
+		log.Printf("ws close failed: %v", err)
+	}
 	log.Printf("ws disconnected: %s", id)
 }
 
@@ -118,6 +120,7 @@ func (b *Bridge) readLoop(session *Session) {
 		if err != nil {
 			return
 		}
+		debugf("ws recv: session=%s bytes=%d", session.ID, len(message))
 		session.mu.Lock()
 		session.LastSeen = time.Now()
 		session.mu.Unlock()
@@ -129,6 +132,7 @@ func (b *Bridge) readLoop(session *Session) {
 		if resp.ID == "" {
 			continue
 		}
+		debugf("ws recv response: id=%s ok=%t error=%s", resp.ID, resp.OK, resp.Error)
 		b.deliver(resp)
 	}
 }
@@ -217,6 +221,7 @@ func (b *Bridge) SendCommand(ctx context.Context, cmd protocol.Command) (protoco
 	if err != nil {
 		return protocol.Response{}, err
 	}
+	debugf("ws send command: id=%s type=%s session=%s bytes=%d", cmd.ID, cmd.Type, cmd.SessionID, len(msg))
 
 	ch := make(chan protocol.Response, 1)
 	b.mu.Lock()
@@ -236,6 +241,7 @@ func (b *Bridge) SendCommand(ctx context.Context, cmd protocol.Command) (protoco
 
 	select {
 	case resp := <-ch:
+		debugf("ws response delivered: id=%s ok=%t error=%s", resp.ID, resp.OK, resp.Error)
 		return resp, nil
 	case <-ctx.Done():
 		b.mu.Lock()

@@ -1,5 +1,7 @@
 # SurfingBro MCP Server
 
+![SurfingBro icon](../icon.png)
+
 This is the MCP server that bridges the LLM to the browser extension over WebSocket.
 
 Repository: https://github.com/adityalohuni/surfing-bros-mcp  

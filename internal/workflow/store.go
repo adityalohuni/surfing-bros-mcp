@@ -13,11 +13,11 @@ import (
 )
 
 type Workflow struct {
-	ID          string                  `json:"id"`
-	Name        string                  `json:"name"`
-	Description string                  `json:"description,omitempty"`
+	ID          string                   `json:"id"`
+	Name        string                   `json:"name"`
+	Description string                   `json:"description,omitempty"`
 	Steps       []browser.RecordedAction `json:"steps"`
-	CreatedAt   time.Time               `json:"createdAt"`
+	CreatedAt   time.Time                `json:"createdAt"`
 }
 
 type Store struct {

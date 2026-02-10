@@ -655,6 +655,8 @@ type OpenTabOutput struct {
 	Tab browser.TabInfo `json:"tab"`
 }
 
+type EmptyOutput struct{}
+
 func (s *Server) openTab(ctx context.Context, _ *mcp.CallToolRequest, input OpenTabInput) (*mcp.CallToolResult, OpenTabOutput, error) {
 	ctx = s.withTarget(ctx, input.TargetInput)
 	tab, err := s.browser.OpenTab(ctx, browser.OpenTabOptions{
