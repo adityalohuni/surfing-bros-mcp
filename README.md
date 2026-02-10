@@ -1,6 +1,6 @@
 # SurfingBro MCP Server
 
-![SurfingBro icon](../icon.png)
+<img src="https://raw.githubusercontent.com/adityalohuni/surfing-bros/master/icon.png" alt="SurfingBro icon" width="96" />
 
 This is the MCP server that bridges the LLM to the browser extension over WebSocket.
 
