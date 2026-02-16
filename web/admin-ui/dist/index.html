@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SurfingBro Admin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --bg: #f6f8fb;
+        --panel: #ffffff;
+        --ink: #132039;
+        --muted: #5d6b85;
+        --accent: #147df5;
+        --ring: #d1e3ff;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Space Grotesk", system-ui, sans-serif;
+        background:
+          radial-gradient(1200px 500px at 15% -10%, #d9ecff 0%, transparent 60%),
+          radial-gradient(1000px 450px at 90% 0%, #fcead6 0%, transparent 55%),
+          var(--bg);
+        color: var(--ink);
+      }
+      #root { min-height: 100vh; }
+    </style>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/@emotion/react@11/dist/emotion-react.umd.min.js"></script>
+    <script crossorigin src="https://unpkg.com/@emotion/styled@11/dist/emotion-styled.umd.min.js"></script>
+    <script crossorigin src="https://unpkg.com/@mui/material@5.15.20/umd/material-ui.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="text/babel" data-presets="react">
+      const {
+        Alert,
+        AppBar,
+        Box,
+        Button,
+        Card,
+        CardContent,
+        Chip,
+        Container,
+        CssBaseline,
+        Dialog,
+        DialogActions,
+        DialogContent,
+        DialogTitle,
+        Divider,
+        Grid,
+        IconButton,
+        InputAdornment,
+        LinearProgress,
+        Paper,
+        Stack,
+        Tab,
+        Tabs,
+        TextField,
+        ThemeProvider,
+        Toolbar,
+        Tooltip,
+        Typography,
+        createTheme,
+      } = MaterialUI;
+
+      const apiBase = window.location.origin;
+      const savedToken = localStorage.getItem("surfingbro_admin_token") || "";
+
+      const theme = createTheme({
+        palette: {
+          mode: "light",
+          primary: { main: "#147df5" },
+          secondary: { main: "#10a37f" },
+          background: { default: "#f6f8fb", paper: "#ffffff" },
+        },
+        shape: { borderRadius: 14 },
+        typography: {
+          fontFamily: "Space Grotesk, system-ui, sans-serif",
+          h4: { fontWeight: 700, letterSpacing: "-0.02em" },
+          h6: { fontWeight: 700 },
+        },
+      });
+
+      function useAdminApi(token) {
+        async function call(path, opts = {}) {
+          const headers = {
+            "Content-Type": "application/json",
+            ...(opts.headers || {}),
+          };
+          if (token) headers.Authorization = `Bearer ${token}`;
+          const res = await fetch(`${apiBase}${path}`, { ...opts, headers });
+          if (!res.ok) {
+            const txt = await res.text();
+            throw new Error(txt || `${res.status} ${res.statusText}`);
+          }
+          if (res.status === 204) return null;
+          return res.json();
+        }
+
+        return {
+          getStatus: () => call("/admin/status"),
+          getClients: () => call("/admin/clients"),
+          getBrowsers: () => call("/admin/browsers"),
+          disconnectClient: (id) => call(`/admin/clients/disconnect?id=${encodeURIComponent(id)}`, { method: "POST" }),
+          disconnectBrowser: (id) => call(`/admin/browsers/disconnect?id=${encodeURIComponent(id)}`, { method: "POST" }),
+          getConfig: () => call("/admin/config"),
+          saveConfig: (cfg) => call("/admin/config", { method: "PUT", body: JSON.stringify(cfg) }),
+        };
+      }
+
+      function fmtAgo(ts) {
+        if (!ts) return "-";
+        const d = Date.now() - new Date(ts).getTime();
+        if (d < 1000) return "just now";
+        const sec = Math.floor(d / 1000);
+        if (sec < 60) return `${sec}s ago`;
+        const min = Math.floor(sec / 60);
+        if (min < 60) return `${min}m ago`;
+        const hr = Math.floor(min / 60);
+        if (hr < 24) return `${hr}h ago`;
+        return `${Math.floor(hr / 24)}d ago`;
+      }
+
+      function App() {
+        const [token, setToken] = React.useState(savedToken);
+        const [tab, setTab] = React.useState(0);
+        const [loading, setLoading] = React.useState(false);
+        const [error, setError] = React.useState("");
+        const [status, setStatus] = React.useState(null);
+        const [clients, setClients] = React.useState([]);
+        const [browsers, setBrowsers] = React.useState([]);
+        const [config, setConfig] = React.useState(null);
+        const [confirm, setConfirm] = React.useState(null);
+
+        const api = React.useMemo(() => useAdminApi(token), [token]);
+
+        async function refreshAll() {
+          if (!token) return;
+          setLoading(true);
+          setError("");
+          try {
+            const [st, cl, br, cfg] = await Promise.all([
+              api.getStatus(),
+              api.getClients(),
+              api.getBrowsers(),
+              api.getConfig(),
+            ]);
+            setStatus(st);
+            setClients(cl);
+            setBrowsers(br);
+            setConfig(cfg);
+          } catch (e) {
+            setError(String(e.message || e));
+          } finally {
+            setLoading(false);
+          }
+        }
+
+        React.useEffect(() => {
+          if (!token) return;
+          refreshAll();
+          const id = setInterval(refreshAll, 3000);
+          return () => clearInterval(id);
+        }, [token]);
+
+        function saveToken() {
+          localStorage.setItem("surfingbro_admin_token", token);
+          refreshAll();
+        }
+
+        async function doDisconnect() {
+          if (!confirm) return;
+          try {
+            if (confirm.kind === "client") {
+              await api.disconnectClient(confirm.id);
+            } else {
+              await api.disconnectBrowser(confirm.id);
+            }
+            setConfirm(null);
+            refreshAll();
+          } catch (e) {
+            setError(String(e.message || e));
+          }
+        }
+
+        async function saveConfig() {
+          try {
+            setLoading(true);
+            const saved = await api.saveConfig(config);
+            setConfig(saved);
+            setError("");
+          } catch (e) {
+            setError(String(e.message || e));
+          } finally {
+            setLoading(false);
+          }
+        }
+
+        return (
+          <ThemeProvider theme={theme}>
+            <CssBaseline />
+            <AppBar position="sticky" color="inherit" elevation={0} sx={{ borderBottom: "1px solid #e5eaf2", backdropFilter: "blur(8px)" }}>
+              <Toolbar sx={{ gap: 2 }}>
+                <Typography variant="h6" sx={{ flexGrow: 1 }}>SurfingBro Admin</Typography>
+                <TextField
+                  size="small"
+                  label="Admin Token"
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                  sx={{ minWidth: 320, background: "#fff" }}
+                  InputProps={{
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <Button size="small" onClick={saveToken}>Use</Button>
+                      </InputAdornment>
+                    ),
+                  }}
+                />
+                <Button variant="contained" onClick={refreshAll}>Refresh</Button>
+              </Toolbar>
+            </AppBar>
+
+            {loading && <LinearProgress />}
+
+            <Container maxWidth="xl" sx={{ py: 3 }}>
+              {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+
+              <Grid container spacing={2} sx={{ mb: 2 }}>
+                <Grid item xs={12} md={4}>
+                  <Card><CardContent><Typography color="text.secondary">MCP Clients</Typography><Typography variant="h4">{status?.mcp_clients ?? "-"}</Typography></CardContent></Card>
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <Card><CardContent><Typography color="text.secondary">Browser Sessions</Typography><Typography variant="h4">{status?.browser_sessions ?? "-"}</Typography></CardContent></Card>
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <Card><CardContent><Typography color="text.secondary">Uptime</Typography><Typography variant="h5">{status?.uptime ?? "-"}</Typography></CardContent></Card>
+                </Grid>
+              </Grid>
+
+              <Paper sx={{ borderRadius: 3, overflow: "hidden" }}>
+                <Tabs value={tab} onChange={(_, v) => setTab(v)}>
+                  <Tab label="Clients" />
+                  <Tab label="Browser Sessions" />
+                  <Tab label="Config" />
+                </Tabs>
+                <Divider />
+
+                <Box sx={{ p: 2 }}>
+                  {tab === 0 && (
+                    <Stack spacing={2}>
+                      {clients.length === 0 && <Typography color="text.secondary">No connected clients.</Typography>}
+                      {clients.map((c) => (
+                        <Card key={c.id} variant="outlined">
+                          <CardContent>
+                            <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "flex-start", sm: "center" }} spacing={1}>
+                              <Box>
+                                <Typography variant="h6">{c.name || "unnamed"}</Typography>
+                                <Typography color="text.secondary" sx={{ fontFamily: "monospace" }}>{c.id}</Typography>
+                                <Typography color="text.secondary">{c.transport} · {c.remote_addr} · seen {fmtAgo(c.last_seen)}</Typography>
+                              </Box>
+                              <Button color="error" variant="outlined" onClick={() => setConfirm({ kind: "client", id: c.id })}>Disconnect</Button>
+                            </Stack>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </Stack>
+                  )}
+
+                  {tab === 1 && (
+                    <Stack spacing={2}>
+                      {browsers.length === 0 && <Typography color="text.secondary">No browser sessions.</Typography>}
+                      {browsers.map((s) => (
+                        <Card key={s.id} variant="outlined">
+                          <CardContent>
+                            <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={2}>
+                              <Box sx={{ flex: 1 }}>
+                                <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                                  <Typography variant="h6" sx={{ fontFamily: "monospace" }}>{s.id.slice(0, 8)}</Typography>
+                                  {s.active && <Chip size="small" label="ACTIVE" color="primary" />}
+                                  <Chip size="small" label={`${(s.tabs || []).length} tabs`} variant="outlined" />
+                                </Stack>
+                                <Typography color="text.secondary">{s.remote_addr} · seen {fmtAgo(s.last_seen)}</Typography>
+                                {s.tabs_error && <Alert severity="warning" sx={{ mt: 1 }}>{s.tabs_error}</Alert>}
+                                <Stack spacing={1} sx={{ mt: 1 }}>
+                                  {(s.tabs || []).map((t) => (
+                                    <Paper key={t.id} variant="outlined" sx={{ p: 1.2, borderRadius: 2, background: "#fbfdff" }}>
+                                      <Typography sx={{ fontWeight: 600 }}>{t.title || "(untitled tab)"}</Typography>
+                                      <Typography color="text.secondary" sx={{ fontSize: 13 }}>{t.url}</Typography>
+                                    </Paper>
+                                  ))}
+                                </Stack>
+                              </Box>
+                              <Box>
+                                <Button color="error" variant="outlined" onClick={() => setConfirm({ kind: "browser", id: s.id })}>Disconnect</Button>
+                              </Box>
+                            </Stack>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </Stack>
+                  )}
+
+                  {tab === 2 && config && (
+                    <Stack spacing={2} sx={{ maxWidth: 700 }}>
+                      <TextField label="Config Path" value={config.path || ""} disabled />
+                      <TextField label="daemon.addr" value={config.daemon_addr || ""} onChange={(e) => setConfig({ ...config, daemon_addr: e.target.value })} />
+                      <TextField label="auth.mcp_token" value={config.mcp_token || ""} onChange={(e) => setConfig({ ...config, mcp_token: e.target.value })} />
+                      <TextField label="auth.admin_token" value={config.admin_token || ""} onChange={(e) => setConfig({ ...config, admin_token: e.target.value })} />
+                      <TextField label="daemon.client_max_idle" value={config.client_max_idle || ""} onChange={(e) => setConfig({ ...config, client_max_idle: e.target.value })} />
+                      <TextField label="tui.admin_base_url" value={config.admin_base_url || ""} onChange={(e) => setConfig({ ...config, admin_base_url: e.target.value })} />
+                      <TextField label="tui.refresh_interval" value={config.tui_refresh_interval || ""} onChange={(e) => setConfig({ ...config, tui_refresh_interval: e.target.value })} />
+                      <Stack direction="row" spacing={1}>
+                        <Button variant="contained" onClick={saveConfig}>Save Config</Button>
+                        <Button variant="outlined" onClick={refreshAll}>Reload</Button>
+                      </Stack>
+                      <Alert severity="info">Changing auth tokens or daemon addr requires restarting mcpd.</Alert>
+                    </Stack>
+                  )}
+                </Box>
+              </Paper>
+            </Container>
+
+            <Dialog open={!!confirm} onClose={() => setConfirm(null)}>
+              <DialogTitle>Confirm Disconnect</DialogTitle>
+              <DialogContent>
+                <Typography>Disconnect {confirm?.kind} <code>{confirm?.id}</code> ?</Typography>
+              </DialogContent>
+              <DialogActions>
+                <Button onClick={() => setConfirm(null)}>Cancel</Button>
+                <Button color="error" variant="contained" onClick={doDisconnect}>Disconnect</Button>
+              </DialogActions>
+            </Dialog>
+          </ThemeProvider>
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    </script>
+  </body>
+</html>

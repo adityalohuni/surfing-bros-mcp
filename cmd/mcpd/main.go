@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -14,6 +14,7 @@ import (
 
 	"github.com/adityalohuni/mcp-server/internal/admin"
 	"github.com/adityalohuni/mcp-server/internal/browser/wsbrowser"
+	"github.com/adityalohuni/mcp-server/internal/config"
 	"github.com/adityalohuni/mcp-server/internal/httpx"
 	"github.com/adityalohuni/mcp-server/internal/mcpserver"
 	"github.com/adityalohuni/mcp-server/internal/page"
@@ -22,10 +23,11 @@ import (
 )
 
 func main() {
-	addr := getenv("MCPD_ADDR", ":9099")
-	mcpToken := os.Getenv("MCPD_AUTH_TOKEN")
-	adminToken := os.Getenv("MCPD_ADMIN_TOKEN")
-	maxIdle := getenvDuration("MCPD_CLIENT_MAX_IDLE", 30*time.Minute)
+	settings, err := config.LoadOrCreate("")
+	if err != nil {
+		log.Fatalf("config load failed: %v", err)
+	}
+	log.Printf("loaded config: %s", settings.Path)
 
 	bridge := wsbridge.NewBridge(wsbridge.Options{
 		CheckOrigin: func(r *http.Request) bool { return true },
@@ -46,23 +48,38 @@ func main() {
 
 	registry := session.NewRegistry()
 	adminHandlers := &admin.Handlers{
-		StartedAt: time.Now(),
-		Clients:   registry,
-		Bridge:    bridge,
-		Browser:   browser,
-		MaxIdle:   maxIdle,
+		StartedAt:  time.Now(),
+		Clients:    registry,
+		Bridge:     bridge,
+		Browser:    browser,
+		MaxIdle:    settings.ClientMaxIdle,
+		ConfigPath: settings.Path,
 	}
 
 	mux := http.NewServeMux()
 	mux.Handle("/ws", http.HandlerFunc(bridge.HandleWS))
-	mux.Handle("/mcp/sse", httpx.RequireToken(mcpToken)(trackSSE(registry, sseHandler)))
-	mux.Handle("/mcp/stream", httpx.RequireToken(mcpToken)(trackStreamable(registry, streamHandler)))
-	mux.Handle("/admin/status", httpx.RequireToken(adminToken)(http.HandlerFunc(adminHandlers.Status)))
-	mux.Handle("/admin/clients", httpx.RequireToken(adminToken)(http.HandlerFunc(adminHandlers.ClientsList)))
-	mux.Handle("/admin/browsers", httpx.RequireToken(adminToken)(http.HandlerFunc(adminHandlers.BrowsersList)))
+	mux.Handle("/mcp/sse", httpx.RequireToken(settings.MCPToken)(trackSSE(registry, sseHandler)))
+	mux.Handle("/mcp/stream", httpx.RequireToken(settings.MCPToken)(trackStreamable(registry, streamHandler)))
+	mux.Handle("/admin/status", httpx.RequireToken(settings.AdminToken)(http.HandlerFunc(adminHandlers.Status)))
+	mux.Handle("/admin/clients", httpx.RequireToken(settings.AdminToken)(http.HandlerFunc(adminHandlers.ClientsList)))
+	mux.Handle("/admin/browsers", httpx.RequireToken(settings.AdminToken)(http.HandlerFunc(adminHandlers.BrowsersList)))
+	mux.Handle("/admin/clients/disconnect", httpx.RequireToken(settings.AdminToken)(http.HandlerFunc(adminHandlers.DisconnectClient)))
+	mux.Handle("/admin/browsers/disconnect", httpx.RequireToken(settings.AdminToken)(http.HandlerFunc(adminHandlers.DisconnectBrowser)))
+	mux.Handle("/admin/config", httpx.RequireToken(settings.AdminToken)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			adminHandlers.ConfigGet(w, r)
+		case http.MethodPut:
+			adminHandlers.ConfigSet(w, r)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})))
+	mux.Handle("/admin/ui", http.RedirectHandler("/admin/ui/", http.StatusFound))
+	mux.Handle("/admin/ui/", http.StripPrefix("/admin/ui/", admin.UIHandler{Root: filepath.Join("web", "admin-ui", "dist")}))
 
 	httpServer := &http.Server{
-		Addr:    addr,
+		Addr:    settings.DaemonAddr,
 		Handler: mux,
 	}
 
@@ -146,20 +163,4 @@ func clientIDFromRequest(r *http.Request) string {
 		return v
 	}
 	return ""
-}
-
-func getenv(key, fallback string) string {
-	if val := strings.TrimSpace(os.Getenv(key)); val != "" {
-		return val
-	}
-	return fallback
-}
-
-func getenvDuration(key string, fallback time.Duration) time.Duration {
-	if val := strings.TrimSpace(os.Getenv(key)); val != "" {
-		if parsed, err := time.ParseDuration(val); err == nil {
-			return parsed
-		}
-	}
-	return fallback
 }

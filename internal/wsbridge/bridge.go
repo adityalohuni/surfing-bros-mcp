@@ -210,6 +210,26 @@ func (b *Bridge) Count() int {
 	return len(b.sessions)
 }
 
+// DisconnectSession closes a websocket session from the server side.
+// If id is empty, the active session is disconnected.
+func (b *Bridge) DisconnectSession(id string) error {
+	session, err := b.sessionByID(id)
+	if err != nil {
+		return err
+	}
+
+	session.mu.Lock()
+	_ = session.Conn.SetWriteDeadline(time.Now().Add(b.writeWait))
+	_ = session.Conn.WriteControl(
+		websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, "closed by server"),
+		time.Now().Add(b.writeWait),
+	)
+	_ = session.Conn.Close()
+	session.mu.Unlock()
+	return nil
+}
+
 // SendCommand sends a command to the active browser session and waits for a response.
 func (b *Bridge) SendCommand(ctx context.Context, cmd protocol.Command) (protocol.Response, error) {
 	session, err := b.sessionByID(cmd.SessionID)

@@ -28,7 +28,56 @@ If you use `mcpd`:
 go run ./cmd/mcpd
 ```
 
-This exposes HTTP/SSE endpoints and admin routes (see `mcp/cmd/mcpd` for flags/env).
+This exposes HTTP/SSE endpoints and admin routes.
+
+`mcpd` reads `~/.config/surfingbros/config.toml` (auto-created on first run).  
+If auth tokens are missing, they are generated and written to the config file.
+
+Example config:
+
+```toml
+[daemon]
+addr = ":9099"
+client_max_idle = "30m"
+
+[auth]
+mcp_token = "..."
+admin_token = "..."
+
+[tui]
+admin_base_url = "http://127.0.0.1:9099"
+refresh_interval = "2s"
+```
+
+Run the admin TUI:
+
+```bash
+go run ./cmd/mpcd-tui
+```
+
+TUI keys: mouse click row select, `tab` switch panel, `j/k` move, `pgup/pgdown` scroll panel viewport, `d` disconnect selected client/browser session, `r` refresh, `s` start `mcpd`, `x` stop `mcpd`, `m` start `mcp`, `n` stop `mcp`, `c` open settings, `q` quit.
+
+Settings mode keys: `j/k` move field, `e` or `enter` edit/apply field, `backspace` delete while editing, `s` save config file, `r` reload config file, `c` or `esc` return to dashboard.
+
+## Admin Web UI
+
+`mcpd` also serves a React-based admin page at:
+
+```text
+http://127.0.0.1:9099/admin/ui/
+```
+
+Use your `auth.admin_token` from `~/.config/surfingbros/config.toml` in the token field.
+
+Admin API routes:
+
+- `GET /admin/status`
+- `GET /admin/clients`
+- `GET /admin/browsers`
+- `POST /admin/clients/disconnect?id=<client-id>`
+- `POST /admin/browsers/disconnect?id=<session-id>`
+- `GET /admin/config`
+- `PUT /admin/config`
 
 ## MCP Tools
 
